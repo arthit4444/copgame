@@ -1,0 +1,690 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>เกมผู้พิทักษ์จิ๋ว AR - จับโจรแสนสนุก!</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  
+  <!-- Google Fonts for Cute Thai Style -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@300..700&family=Kanit:wght@300;500;700&display=swap" rel="stylesheet">
+
+  <!-- MediaPipe Library for Hand Tracking -->
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+
+  <style>
+    body {
+      font-family: 'Fredoka', 'Kanit', sans-serif;
+      user-select: none;
+      -webkit-user-select: none;
+      background-color: #fef08a; /* สีเหลืองพาสเทลสดใส */
+      overflow: hidden;
+      touch-action: none;
+    }
+    .wiggle {
+      animation: wiggle 0.5s infinite alternate;
+    }
+    @keyframes wiggle {
+      0% { transform: rotate(-5deg); }
+      100% { transform: rotate(5deg); }
+    }
+    .pulse-glow {
+      animation: pulse-glow 2s infinite ease-in-out;
+    }
+    @keyframes pulse-glow {
+      0%, 100% { transform: scale(1); filter: drop-shadow(0 0 5px rgba(244,63,94,0.6)); }
+      50% { transform: scale(1.05); filter: drop-shadow(0 0 15px rgba(244,63,94,0.9)); }
+    }
+    html, body {
+      height: 100%;
+      width: 100%;
+      margin: 0;
+      padding: 0;
+    }
+  </style>
+</head>
+<body class="relative w-screen h-screen overflow-hidden select-none">
+
+  <!-- ================= พื้นหลังกล้องและหน้าจอเล่นเกม (เต็มหน้าจอ) ================= -->
+  <!-- กล้องถ่ายรูป -->
+  <video id="webcam" class="absolute inset-0 w-full h-full object-cover hidden" autoplay playsinline></video>
+  
+  <!-- พื้นหลังจำลองธรรมชาติเมื่อไม่มีกล้อง -->
+  <div id="virtual-bg" class="absolute inset-0 w-full h-full bg-gradient-to-b from-sky-300 via-blue-200 to-emerald-200 flex flex-col justify-between p-8 pointer-events-none">
+    <div class="flex justify-between">
+      <span class="text-7xl opacity-40 animate-bounce">☁️</span>
+      <span class="text-8xl opacity-30">☁️</span>
+    </div>
+    <div class="flex justify-around items-end">
+      <span class="text-8xl opacity-40">🌳</span>
+      <span class="text-7xl opacity-40">🏡</span>
+      <span class="text-8xl opacity-45">🌲</span>
+    </div>
+  </div>
+
+  <!-- แคนวาสหลักวาดภาพกราฟิกทั้งหมด (ทับกล้อง) -->
+  <canvas id="game-canvas" class="absolute inset-0 w-full h-full cursor-none z-10"></canvas>
+
+
+  <!-- ================= ส่วนควบคุม & HUD ลอยหน้าจอ (Interactive HUD) ================= -->
+  
+  <!-- แถบหัวข้อและสถิติส่วนบน (ลอยบนแคนวาส) -->
+  <div class="absolute top-4 left-4 right-4 flex flex-col md:flex-row justify-between items-center gap-2 z-20 pointer-events-none">
+    
+    <!-- ป้ายโลโก้เกมน่ารัก -->
+    <div class="pointer-events-auto bg-white/95 border-4 border-pink-400 rounded-2xl px-4 py-1.5 shadow-lg transform rotate-[-1deg] flex items-center gap-2">
+      <span class="text-2xl md:text-3xl wiggle">🚓</span>
+      <div>
+        <h1 class="text-lg md:text-2xl font-black text-pink-500 leading-none">ผู้พิทักษ์จิ๋ว AR</h1>
+        <p class="text-[10px] md:text-xs text-blue-500 font-bold">ขยับมือไล่จับโจรกันหนูๆ!</p>
+      </div>
+    </div>
+
+    <!-- แผงคะแนนและเวลา -->
+    <div id="game-stats" class="hidden pointer-events-auto flex items-center gap-4 bg-white/95 border-4 border-blue-400 rounded-2xl px-6 py-2 shadow-lg">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl md:text-3xl">⭐</span>
+        <span class="text-sm md:text-lg font-bold text-blue-600">คะแนน: <span id="score-val" class="text-pink-500 text-2xl md:text-3xl font-black">0</span></span>
+      </div>
+      <div class="w-px h-8 bg-blue-200"></div>
+      <div class="flex items-center gap-2">
+        <span class="text-2xl md:text-3xl animate-pulse">⏰</span>
+        <span class="text-sm md:text-lg font-bold text-blue-600">เวลา: <span id="time-val" class="text-red-500 text-2xl md:text-3xl font-black">30</span> วิ</span>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- คู่มือการเล่นขนาดเล็กและลิ้งก์ปิดด้านล่างจอ -->
+  <div class="absolute bottom-4 left-4 right-4 flex flex-col md:flex-row justify-between items-center gap-2 z-20 pointer-events-none">
+    
+    <!-- ฝั่งซ้าย: วิธีเล่นแบบกระชับ -->
+    <div class="pointer-events-auto bg-white/90 px-4 py-2 rounded-2xl border-2 border-yellow-400 flex gap-4 shadow-md text-xs font-bold">
+      <div class="flex items-center gap-1">
+        <span class="text-xl">🦹‍♂️/🦝</span>
+        <span class="text-green-600">จับโจร <b class="text-green-700">+10</b></span>
+      </div>
+      <div class="w-px h-4 bg-yellow-300"></div>
+      <div class="flex items-center gap-1">
+        <span class="text-xl">🐱/🐶</span>
+        <span class="text-red-500">เลี่ยงสัตว์เลี้ยง <b class="text-red-700">-5</b></span>
+      </div>
+    </div>
+
+    <div class="text-[11px] md:text-xs text-slate-700 bg-white/75 px-3 py-1 rounded-full font-bold shadow-sm">
+      🧸 ฝึกกล้ามเนื้อมือและสายตาแสนสนุก 🎈
+    </div>
+  </div>
+
+
+  <!-- ================= หน้าจอสถานะระบบ / เมนูลอย (Overlays) ================= -->
+
+  <!-- 1. หน้าจอเริ่มเกม (Start Menu) -->
+  <div id="start-screen" class="absolute inset-0 bg-sky-400/80 backdrop-blur-sm flex items-center justify-center p-4 z-40">
+    <div class="bg-white p-6 md:p-8 rounded-3xl border-8 border-yellow-300 max-w-md w-full shadow-2xl text-center transform scale-100 hover:scale-102 transition-transform">
+      <span class="text-7xl block mb-2 wiggle">👮‍♀️✨🦹‍♂️</span>
+      <h2 class="text-3xl md:text-4xl font-black text-pink-500 mb-2">พร้อมจับโจรหรือยัง?</h2>
+      <p class="text-blue-600 font-bold mb-5 text-sm md:text-base leading-relaxed">
+        ยกมือขึ้นส่องที่กล้อง แล้วขยับ <span class="text-pink-500 font-black">"ตราตำรวจ"</span> ไปแตะจับ <span class="text-red-500 font-black">เจ้าโจร (🦹‍♂️/🦝)</span> กันเถอะ! <br>
+        <span class="text-red-500 block mt-1">❌ ระวัง! อย่าไปโดน น้องหมาน้องแมว (🐶/🐱) นะ</span>
+      </p>
+      
+      <!-- แจ้งสถานะกล้อง -->
+      <div id="camera-status" class="text-xs font-bold text-gray-500 mb-5 bg-gray-100 p-2.5 rounded-xl">
+        🔍 กำลังเตรียมระบบตรวจจับกล้องและมือของคุณ...
+      </div>
+
+      <button id="btn-start" class="pulse-glow px-10 py-4 bg-gradient-to-r from-pink-500 to-yellow-400 hover:from-pink-600 hover:to-yellow-500 text-white font-black text-2xl md:text-3xl rounded-full shadow-xl transform active:scale-95 transition-all border-4 border-white">
+        เริ่มเล่นเลย! 🎉
+      </button>
+    </div>
+  </div>
+
+  <!-- 2. หน้าจอจบเกม (Game Over) -->
+  <div id="game-over-screen" class="absolute inset-0 bg-pink-500/85 backdrop-blur-sm flex items-center justify-center p-4 z-40 hidden">
+    <div class="bg-white p-6 md:p-8 rounded-3xl border-8 border-yellow-300 max-w-md w-full shadow-2xl text-center">
+      <span class="text-7xl block mb-2 animate-bounce">🏆🌟🎉</span>
+      <h2 class="text-3xl md:text-4xl font-black text-blue-600 mb-1">ยอดเยี่ยมมาก!</h2>
+      <p class="text-gray-600 font-bold mb-4">หนูๆ ทำหน้าที่ผู้พิทักษ์ได้เก่งที่สุดเลย!</p>
+      
+      <div class="bg-yellow-100 rounded-2xl p-4 mb-5 border-4 border-yellow-400">
+        <p class="text-gray-500 text-xs md:text-sm font-bold">คะแนนรวมที่ได้</p>
+        <p id="final-score" class="text-5xl md:text-6xl font-black text-pink-500">0</p>
+        <p id="star-rating" class="text-xl md:text-2xl mt-2 text-yellow-600 font-bold">⭐⭐⭐</p>
+      </div>
+
+      <button id="btn-restart" class="px-8 py-4 bg-gradient-to-r from-blue-500 to-green-400 hover:from-blue-600 hover:to-green-500 text-white font-black text-2xl rounded-full shadow-lg transform active:scale-95 transition-all border-4 border-white">
+        เล่นอีกครั้ง 🔄
+      </button>
+    </div>
+  </div>
+
+  <!-- แจ้งเตือนกรณีไม่มีกล้อง -->
+  <div id="control-hint" class="absolute bottom-20 left-1/2 transform -translate-x-1/2 bg-black/70 text-white text-[11px] md:text-xs px-4 py-1.5 rounded-full z-30 font-bold hidden pointer-events-none">
+    👉 ขยับนิ้วแตะหรือใช้เมาส์ลากจับคุณโจรได้เช่นกันจ้า!
+  </div>
+
+  <!-- แจ้งเตือน Toast เมื่อปรับโหมดแอร์กู -->
+  <div id="alert-toast" class="fixed top-4 left-1/2 transform -translate-x-1/2 bg-pink-500 text-white font-bold py-2.5 px-6 rounded-full shadow-xl border-2 border-white z-50 hidden transition-all text-xs md:text-sm">
+    ⚠️ ไม่พบกล้อง ไม่เป็นไรนะ! ใช้นิ้วจิ้มหน้าจอเล่นแทนได้เลยจ้า
+  </div>
+
+
+  <script>
+    // --- ตั้งค่าระบบ Web Audio สำหรับเสียงเอฟเฟกต์แสนสนุก ---
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    
+    function playSound(type) {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+      
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+
+      const now = audioCtx.currentTime;
+
+      if (type === 'catch') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(300, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.15);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.15);
+        osc.start(now);
+        osc.stop(now + 0.15);
+      } else if (type === 'wrong') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(220, now);
+        osc.frequency.linearRampToValueAtTime(110, now + 0.3);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      } else if (type === 'win') {
+        osc.type = 'triangle';
+        osc.frequency.setValueAtTime(440, now);
+        osc.frequency.setValueAtTime(554, now + 0.1);
+        osc.frequency.setValueAtTime(659, now + 0.2);
+        osc.frequency.setValueAtTime(880, now + 0.3);
+        gain.gain.setValueAtTime(0.3, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.6);
+        osc.start(now);
+        osc.stop(now + 0.6);
+      }
+    }
+
+    // --- ประกาศตัวแปรองค์ประกอบ DOM ---
+    const videoElement = document.getElementById('webcam');
+    const canvasElement = document.getElementById('game-canvas');
+    const canvasCtx = canvasElement.getContext('2d');
+    
+    const startScreen = document.getElementById('start-screen');
+    const gameOverScreen = document.getElementById('game-over-screen');
+    const cameraStatus = document.getElementById('camera-status');
+    const statsPanel = document.getElementById('game-stats');
+    const scoreVal = document.getElementById('score-val');
+    const timeVal = document.getElementById('time-val');
+    const finalScoreText = document.getElementById('final-score');
+    const starRatingText = document.getElementById('star-rating');
+    const alertToast = document.getElementById('alert-toast');
+    const controlHint = document.getElementById('control-hint');
+    const virtualBg = document.getElementById('virtual-bg');
+
+    const btnStart = document.getElementById('btn-start');
+    const btnRestart = document.getElementById('btn-restart');
+
+    // --- สถานะเกม (Game State) ---
+    let score = 0;
+    let timeLeft = 30;
+    let isPlaying = false;
+    let gameInterval = null;
+    let gameObjects = [];
+    let confettiParticles = [];
+    
+    // ตำแหน่งควบคุม (องศา/สัมผัส)
+    let pointerX = -200;
+    let pointerY = -200;
+    let lastPointerUpdate = 0;
+    let isUsingCamera = false;
+
+    // รายการตัวละคร
+    const THIEF_TYPES = [
+      { emoji: '🦹‍♂️', type: 'thief', size: 75 },
+      { emoji: '🦝', type: 'thief', size: 70 }
+    ];
+    
+    const FRIENDLY_TYPES = [
+      { emoji: '🐶', type: 'friend', size: 70 },
+      { emoji: '🐱', type: 'friend', size: 70 },
+      { emoji: '🐰', type: 'friend', size: 65 }
+    ];
+
+    // ปรับขนาดแคนวาสให้เต็มหน้าจอจริงแบบ High-DPI
+    function resizeCanvas() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const dpr = window.devicePixelRatio || 1;
+      
+      canvasElement.width = w * dpr;
+      canvasElement.height = h * dpr;
+      
+      canvasCtx.resetTransform();
+      canvasCtx.scale(dpr, dpr);
+    }
+    window.addEventListener('resize', resizeCanvas);
+    resizeCanvas();
+
+    // --- ระบบตรวจสอบมือด้วย MediaPipe Hands ---
+    let hands = null;
+    let camera = null;
+
+    function initHandTracking() {
+      hands = new Hands({
+        locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}`
+      });
+
+      hands.setOptions({
+        maxNumHands: 1,
+        modelComplexity: 1,
+        minDetectionConfidence: 0.6,
+        minTrackingConfidence: 0.6
+      });
+
+      hands.onResults(onHandResults);
+
+      camera = new Camera(videoElement, {
+        onFrame: async () => {
+          if (isPlaying && isUsingCamera) {
+            await hands.send({ image: videoElement });
+          }
+        },
+        width: 1280,
+        height: 720
+      });
+
+      camera.start()
+        .then(() => {
+          isUsingCamera = true;
+          videoElement.classList.remove('hidden');
+          virtualBg.classList.add('hidden');
+          cameraStatus.innerHTML = '🟢 เชื่อมต่อกล้องเรียบร้อย! ขยับมือโบกหน้าจอได้เลย';
+          cameraStatus.className = "text-xs font-bold text-green-600 mb-4 bg-green-50 p-2.5 rounded-xl";
+        })
+        .catch((err) => {
+          console.warn("ไม่สามารถใช้กล้องถ่ายรูปได้: ", err);
+          isUsingCamera = false;
+          showToast();
+          cameraStatus.innerHTML = '🟡 กล้องไม่ทำงาน: ปรับเป็นระบบจิ้มหน้าจอ / ลากเมาส์แทนแล้วครับ!';
+          cameraStatus.className = "text-xs font-bold text-yellow-600 mb-4 bg-yellow-50 p-2.5 rounded-xl";
+          controlHint.classList.remove('hidden');
+        });
+    }
+
+    // เมื่อประมวลผลกล้องได้สำเร็จ
+    function onHandResults(results) {
+      if (!isPlaying) return;
+
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+
+      if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
+        const hand = results.multiHandLandmarks[0];
+        // นำพิกัดจุดที่ 8 (ปลายนิ้วชี้)
+        const indexFinger = hand[8];
+        
+        // สลับฝั่งแกน X เพื่อพฤติกรรมกระจกเงา
+        pointerX = (1 - indexFinger.x) * w;
+        pointerY = indexFinger.y * h;
+        lastPointerUpdate = Date.now();
+        controlHint.classList.add('hidden');
+      } else {
+        // หากไม่สามารถจับนิ้วได้ใน 2 วินาที ค่อยแสดงคำแนะนำสำรอง
+        if (Date.now() - lastPointerUpdate > 2000) {
+          controlHint.classList.remove('hidden');
+        }
+      }
+    }
+
+    function showToast() {
+      alertToast.classList.remove('hidden');
+      setTimeout(() => {
+        alertToast.classList.add('hidden');
+      }, 5000);
+    }
+
+    // --- ควบคุมเป้าหมายสำรองด้วยนิ้วหรือเมาส์ ---
+    function updatePointerFromEvent(e) {
+      const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+      const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+      
+      pointerX = clientX;
+      pointerY = clientY;
+      lastPointerUpdate = Date.now();
+      controlHint.classList.add('hidden');
+    }
+
+    window.addEventListener('mousemove', updatePointerFromEvent);
+    window.addEventListener('touchmove', (e) => {
+      updatePointerFromEvent(e);
+    }, { passive: true });
+
+    // --- ตรรกะของเกม (Game Logic) ---
+
+    // สุ่มเสกโจรและสัตว์ป่า
+    function spawnObject() {
+      if (!isPlaying) return;
+
+      const isThief = Math.random() < 0.65; // โอกาสเกิดโจร 65%
+      const template = isThief 
+        ? THIEF_TYPES[Math.floor(Math.random() * THIEF_TYPES.length)]
+        : FRIENDLY_TYPES[Math.floor(Math.random() * FRIENDLY_TYPES.length)];
+
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      const padding = 100; // จัดวางให้อยู่ในจอภาพพอดี
+
+      const obj = {
+        id: Math.random(),
+        emoji: template.emoji,
+        type: template.type,
+        size: template.size,
+        x: padding + Math.random() * (w - padding * 2),
+        y: padding + Math.random() * (h - padding * 2),
+        scale: 0.1,
+        state: 'spawning',
+        age: 0,
+        maxAge: 110 + Math.random() * 50, // อยู่บนจอสั้นลงนิดหน่อยเพื่อให้เกมรวดเร็วตื่นเต้น
+        wiggleOffset: Math.random() * 100
+      };
+
+      gameObjects.push(obj);
+    }
+
+    // สร้างลูกกระสุนเศษกระจกดาวเอฟเฟกต์
+    function spawnParticles(x, y, color) {
+      for (let i = 0; i < 12; i++) {
+        confettiParticles.push({
+          x: x,
+          y: y,
+          vx: (Math.random() - 0.5) * 12,
+          vy: (Math.random() - 0.5) * 12 - 4,
+          color: color || '#f43f5e',
+          size: 7 + Math.random() * 10,
+          alpha: 1,
+          shape: Math.random() > 0.4 ? 'star' : 'circle'
+        });
+      }
+    }
+
+    // ตรวจสอบการชน
+    function checkCollisions() {
+      if (pointerX < 0 || pointerY < 0) return;
+
+      const hitRadius = 50; // รัศมีป้ายตรวจ
+
+      for (let i = gameObjects.length - 1; i >= 0; i--) {
+        const obj = gameObjects[i];
+        if (obj.state !== 'active') continue;
+
+        const dist = Math.hypot(obj.x - pointerX, obj.y - pointerY);
+        if (dist < hitRadius + (obj.size / 2)) {
+          obj.state = 'dying';
+          
+          if (obj.type === 'thief') {
+            score += 10;
+            playSound('catch');
+            spawnParticles(obj.x, obj.y, '#f59e0b');
+          } else {
+            score = Math.max(0, score - 5);
+            playSound('wrong');
+            spawnParticles(obj.x, obj.y, '#ef4444');
+          }
+          
+          scoreVal.innerText = score;
+        }
+      }
+    }
+
+    // เรนเดอร์เกมลูป
+    function updateFrame() {
+      const w = window.innerWidth;
+      const h = window.innerHeight;
+      
+      // 1. เคลียร์เฟรมหลัก
+      canvasCtx.clearRect(0, 0, w, h);
+
+      // วาดภาพกล้องสดเป็นแบคกราวด์หลัก
+      if (isUsingCamera) {
+        canvasCtx.save();
+        canvasCtx.translate(w, 0);
+        canvasCtx.scale(-1, 1);
+        canvasCtx.drawImage(videoElement, 0, 0, w, h);
+        canvasCtx.restore();
+      }
+
+      // ฟิลเตอร์สีย้อมพาสเทลเพื่อความนุ่มละมุนตา
+      canvasCtx.fillStyle = isUsingCamera ? 'rgba(255, 242, 242, 0.08)' : 'rgba(255, 255, 255, 0)';
+      canvasCtx.fillRect(0, 0, w, h);
+
+      // 2. ขยับวาดตัวละคร (ทึบแสง คมชัด 100%)
+      for (let i = gameObjects.length - 1; i >= 0; i--) {
+        const obj = gameObjects[i];
+        obj.age++;
+
+        if (obj.state === 'spawning') {
+          obj.scale += 0.2;
+          if (obj.scale >= 1) {
+            obj.scale = 1;
+            obj.state = 'active';
+          }
+        }
+
+        if (obj.age > obj.maxAge && obj.state === 'active') {
+          obj.state = 'dying';
+        }
+
+        if (obj.state === 'dying') {
+          obj.scale -= 0.2;
+          if (obj.scale <= 0) {
+            gameObjects.splice(i, 1);
+            continue;
+          }
+        }
+
+        const wiggleX = Math.sin((obj.age + obj.wiggleOffset) * 0.05) * 5;
+        const wiggleY = Math.cos((obj.age + obj.wiggleOffset) * 0.07) * 3;
+
+        // วาดรูปทรงตัวละคร
+        canvasCtx.save();
+        canvasCtx.translate(obj.x + wiggleX, obj.y + wiggleY);
+        canvasCtx.scale(obj.scale, obj.scale);
+        
+        canvasCtx.font = `bold ${obj.size}px Arial, Apple Color Emoji, Segoe UI Emoji`;
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        canvasCtx.shadowBlur = 0; 
+        
+        // ขอบทึบสีขาวคมชัด
+        canvasCtx.lineWidth = 10;
+        canvasCtx.strokeStyle = '#ffffff';
+        canvasCtx.lineJoin = 'round';
+        canvasCtx.strokeText(obj.emoji, 0, 0);
+        
+        canvasCtx.fillText(obj.emoji, 0, 0);
+        canvasCtx.restore();
+      }
+
+      // 3. วาดเอฟเฟกต์สะเก็ดดาว
+      for (let i = confettiParticles.length - 1; i >= 0; i--) {
+        const p = confettiParticles[i];
+        p.x += p.vx;
+        p.y += p.vy;
+        p.vy += 0.25;
+        p.alpha -= 0.025;
+
+        if (p.alpha <= 0) {
+          confettiParticles.splice(i, 1);
+          continue;
+        }
+
+        canvasCtx.save();
+        canvasCtx.globalAlpha = p.alpha;
+        canvasCtx.fillStyle = p.color;
+        
+        if (p.shape === 'star') {
+          drawStar(canvasCtx, p.x, p.y, 5, p.size, p.size / 2);
+        } else {
+          canvasCtx.beginPath();
+          canvasCtx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+          canvasCtx.fill();
+        }
+        canvasCtx.restore();
+      }
+
+      // 4. วาดป้ายตราตำรวจที่ปลายนิ้ว / จุดสัมผัส (ลอยอยู่ด้านบนสุด)
+      if (pointerX >= 0 && pointerY >= 0) {
+        canvasCtx.save();
+        canvasCtx.translate(pointerX, pointerY);
+        
+        const pulse = 1 + Math.sin(Date.now() * 0.012) * 0.07;
+        canvasCtx.scale(pulse, pulse);
+
+        // วงรัศมีเป้าหมายวงประสีชมพูทึบ
+        canvasCtx.beginPath();
+        canvasCtx.arc(0, 0, 52, 0, Math.PI * 2);
+        canvasCtx.strokeStyle = '#f43f5e';
+        canvasCtx.lineWidth = 5;
+        canvasCtx.setLineDash([8, 5]);
+        canvasCtx.stroke();
+
+        // หมวดหมู่วาดตราตำรวจ
+        canvasCtx.font = 'bold 55px Arial, Apple Color Emoji, Segoe UI Emoji';
+        canvasCtx.textAlign = 'center';
+        canvasCtx.textBaseline = 'middle';
+        
+        canvasCtx.lineWidth = 8;
+        canvasCtx.strokeStyle = '#ffffff';
+        canvasCtx.strokeText('👮‍♂️', 0, -4);
+        canvasCtx.fillText('👮‍♂️', 0, -4);
+        
+        canvasCtx.restore();
+      }
+
+      checkCollisions();
+
+      if (isPlaying) {
+        requestAnimationFrame(updateFrame);
+      }
+    }
+
+    function drawStar(ctx, cx, cy, spikes, outerRadius, innerRadius) {
+      let rot = Math.PI / 2 * 3;
+      let x = cx;
+      let y = cy;
+      const step = Math.PI / spikes;
+
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - outerRadius);
+      for (let i = 0; i < spikes; i++) {
+        x = cx + Math.cos(rot) * outerRadius;
+        y = cy + Math.sin(rot) * outerRadius;
+        ctx.lineTo(x, y);
+        rot += step;
+
+        x = cx + Math.cos(rot) * innerRadius;
+        y = cy + Math.sin(rot) * innerRadius;
+        ctx.lineTo(x, y);
+        rot += step;
+      }
+      ctx.lineTo(cx, cy - outerRadius);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    // --- วงจรการรันและทำงานของเกม ---
+
+    function startGame() {
+      if (audioCtx.state === 'suspended') {
+        audioCtx.resume();
+      }
+
+      score = 0;
+      timeLeft = 30;
+      gameObjects = [];
+      confettiParticles = [];
+      isPlaying = true;
+
+      scoreVal.innerText = score;
+      timeVal.innerText = timeLeft;
+
+      startScreen.classList.add('hidden');
+      gameOverScreen.classList.add('hidden');
+      statsPanel.classList.remove('hidden');
+
+      requestAnimationFrame(updateFrame);
+
+      gameInterval = setInterval(() => {
+        timeLeft--;
+        timeVal.innerText = timeLeft;
+
+        if (timeLeft <= 0) {
+          endGame();
+        }
+      }, 1000);
+
+      spawnLoop();
+    }
+
+    let spawnTimer = null;
+    function spawnLoop() {
+      if (!isPlaying) return;
+      
+      spawnObject();
+      
+      const minSpawnTime = 350;
+      const maxSpawnTime = 1100;
+      const delay = Math.max(minSpawnTime, maxSpawnTime - (30 - timeLeft) * 25);
+      
+      spawnTimer = setTimeout(spawnLoop, delay);
+    }
+
+    function endGame() {
+      isPlaying = false;
+      clearInterval(gameInterval);
+      clearTimeout(spawnTimer);
+      
+      playSound('win');
+
+      let stars = '⭐';
+      if (score >= 120) {
+        stars = '⭐⭐⭐ 🏆 (ระดับ: สุดยอดฮีโร่ผู้พิทักษ์!)';
+      } else if (score >= 60) {
+        stars = '⭐⭐ (ระดับ: ยอดตำรวจมือปราบ)';
+      } else {
+        stars = '⭐ (ระดับ: ผู้พิทักษ์ฝึกหัดแสนเก่ง)';
+      }
+
+      finalScoreText.innerText = score;
+      starRatingText.innerText = stars;
+
+      statsPanel.classList.add('hidden');
+      gameOverScreen.classList.remove('hidden');
+      controlHint.classList.add('hidden');
+    }
+
+    btnStart.addEventListener('click', startGame);
+    btnRestart.addEventListener('click', startGame);
+
+    window.onload = () => {
+      initHandTracking();
+    };
+  </script>
+</body>
+</html>
